@@ -1,5 +1,10 @@
 require("dotenv").config();
 
+function saveTimeline(messages) {
+    console.log("✅ saveTimeline 被调用，消息数量：", messages.length);
+    // ... 后面的代码不变
+}
+
 const Fastify = require("fastify");
 const fs = require("fs-extra");
 const path = require("path");
@@ -198,11 +203,44 @@ function loadTimeline() {
 // 保存 timeline（保留 SP）
 // ========================
 function saveTimeline(messages) {
-  const sp = messages.find(m => m.role === "system");
-  const nonSP = messages.filter(m => m.role !== "system");
-  const trimmed = nonSP.slice(-49);
-  const final = sp ? [sp, ...trimmed] : trimmed;
-  fs.writeJsonSync(TIMELINE_FILE, final, { spaces: 2 });
+    // 1. 补全 timestamp
+    const enhanced = messages.map(msg => {
+        if (!msg.timestamp) {
+            const content = normalizeContentToText(msg.content);
+            const extracted = extractTimestamp(content);
+            const ts = extracted ? extracted.toISOString() : new Date().toISOString();
+            return { ...msg, timestamp: ts };
+        }
+        return msg;
+    });
+
+    // 2. 分离系统消息
+    const sp = enhanced.find(m => m.role === "system");
+    const nonSP = enhanced.filter(m => m.role !== "system");
+
+    // 3. 按 timestamp 排序（时间早的在前）
+    nonSP.sort((a, b) => {
+        const timeA = new Date(a.timestamp).getTime();
+        const timeB = new Date(b.timestamp).getTime();
+        return timeA - timeB;
+    });
+
+    // 4. 统一截取最近 50 条（按时间排序后的最后 50 条）
+    const trimmed = nonSP.slice(-50);
+
+    // 5. 重新分配 position（按时间顺序）
+    let pos = 1;
+    const finalNonSP = trimmed.map(msg => {
+        const newMsg = { ...msg, position: pos };
+        pos++;
+        return newMsg;
+    });
+
+    // 6. 加上系统消息
+    const final = sp ? [sp, ...finalNonSP] : finalNonSP;
+
+    // 7. 写入文件
+    fs.writeJsonSync(TIMELINE_FILE, final, { spaces: 2 });
 }
 
 // ========================
@@ -499,11 +537,13 @@ app.addHook("onRequest", (req, reply, done) => {
   if (req.url.startsWith("/admin")) return done();
   // 批注 2026-07-15：公网部署常经过反代，真实公网请求可能在 Node 侧显示为 127/10 网段；
   // 所以 ALLOW_PUBLIC_API=true 后必须先验 /v1 的网关 key，避免被云平台内网 IP 绕过。
-  if (readBooleanEnv("ALLOW_PUBLIC_API", false) && req.url.startsWith("/v1/")) {
-    const configuredKey = readEnvValue("GATEWAY_API_KEY");
+// 使用 process.env 读取环境变量，兼容 Railway
+const allowPublic = String(process.env.ALLOW_PUBLIC_API || "").toLowerCase() === "true";
+if (allowPublic && req.url.startsWith("/v1/")) {
+    const configuredKey = process.env.GATEWAY_API_KEY || "";
     if (!configuredKey) {
-      reply.code(401).send({ error: "公网 /v1 已开启，但 GATEWAY_API_KEY 未配置" });
-      return;
+        reply.code(401).send({ error: "公网 /v1 已开启，但 GATEWAY_API_KEY 未配置" });
+        return;
     }
     const auth = String(req.headers.authorization || "");
     const bearer = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || "";
@@ -511,7 +551,7 @@ app.addHook("onRequest", (req, reply, done) => {
     if (bearer === configuredKey || headerKey === configuredKey) return done();
     reply.code(401).send({ error: "Gateway API Key 无效或缺失" });
     return;
-  }
+}
   const ip = req.ip || req.connection.remoteAddress;
   const isTrustedNetwork = ip === "127.0.0.1" || ip === "::1" || ip === "localhost" || /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(ip);
   if (isTrustedNetwork) return done();
@@ -568,6 +608,13 @@ app.post("/v1/chat/completions", async (req, reply) => {
     const llmMessages = kelivoMessages
       .map(prepareMessageForLLM)
       .filter(Boolean);
+
+// 添加系统指令：日常对话不要模仿推送格式
+const systemInstruction = {
+  role: "system",
+  content: "这是你与用户的日常对话，请不要使用推送消息的格式（例如不要包含时间戳、'刚刚给用户发了 Bark'、'推送'等字样）。"
+};
+llmMessages.unshift(systemInstruction);
 
     const oldEvents = stripPosition(
       oldTimeline.filter(isSpecialEvent).sort((a, b) => {
