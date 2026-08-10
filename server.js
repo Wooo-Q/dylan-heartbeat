@@ -33,9 +33,9 @@ const TIMESTAMP_DB_FILE = "./message_timestamps.json";
 const DEFAULT_RESTART_COMMAND = "pm2 restart gateway wake-up --update-env";
 
 function readBooleanEnv(key, fallback = false) {
-  const raw = String(process.env[key] ?? "").trim().toLowerCase();
-  if (!raw) return fallback;
-  return ["1", "true", "yes", "on"].includes(raw);
+    const raw = String(process.env[key] ?? "").trim().toLowerCase();
+    if (!raw) return fallback;
+    return ["1", "true", "yes", "on"].includes(raw);
 }
 
 function configuredModelName() {
@@ -785,15 +785,7 @@ app.post("/internal/wake-event", async (req, reply) => {
 // 读取 .env 值
 // ========================
 function readEnvValue(key) {
-  try {
-    const envContent = fs.readFileSync(ENV_FILE, "utf-8");
-    const lines = envContent.split("\n");
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith(key + "=")) return trimmed.substring(key.length + 1).trim();
-    }
-  } catch {}
-  return process.env[key] || "";
+    return process.env[key] || "";
 }
 
 function readEnvValueOrDefault(key, fallback) {
