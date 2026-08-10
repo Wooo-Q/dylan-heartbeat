@@ -789,8 +789,8 @@ function readEnvValue(key) {
 }
 
 function readEnvValueOrDefault(key, fallback) {
-  const value = readEnvValue(key);
-  return value === "" ? fallback : value;
+    const value = process.env[key] || "";
+    return value === "" ? fallback : value;
 }
 
 function normalizePositiveInteger(value, key, fallback) {
