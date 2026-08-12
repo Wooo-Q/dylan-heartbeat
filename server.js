@@ -33,9 +33,9 @@ const TIMESTAMP_DB_FILE = "./message_timestamps.json";
 const DEFAULT_RESTART_COMMAND = "pm2 restart gateway wake-up --update-env";
 
 function readBooleanEnv(key, fallback = false) {
-    const raw = String(process.env[key] ?? "").trim().toLowerCase();
-    if (!raw) return fallback;
-    return ["1", "true", "yes", "on"].includes(raw);
+  const raw = String(process.env[key] ?? "").trim().toLowerCase();
+  if (!raw) return fallback;
+  return ["1", "true", "yes", "on"].includes(raw);
 }
 
 function configuredModelName() {
@@ -537,13 +537,11 @@ app.addHook("onRequest", (req, reply, done) => {
   if (req.url.startsWith("/admin")) return done();
   // 批注 2026-07-15：公网部署常经过反代，真实公网请求可能在 Node 侧显示为 127/10 网段；
   // 所以 ALLOW_PUBLIC_API=true 后必须先验 /v1 的网关 key，避免被云平台内网 IP 绕过。
-// 使用 process.env 读取环境变量，兼容 Railway
-const allowPublic = String(process.env.ALLOW_PUBLIC_API || "").toLowerCase() === "true";
-if (allowPublic && req.url.startsWith("/v1/")) {
-    const configuredKey = process.env.GATEWAY_API_KEY || "";
+  if (readBooleanEnv("ALLOW_PUBLIC_API", false) && req.url.startsWith("/v1/")) {
+    const configuredKey = readEnvValue("GATEWAY_API_KEY");
     if (!configuredKey) {
-        reply.code(401).send({ error: "公网 /v1 已开启，但 GATEWAY_API_KEY 未配置" });
-        return;
+      reply.code(401).send({ error: "公网 /v1 已开启，但 GATEWAY_API_KEY 未配置" });
+      return;
     }
     const auth = String(req.headers.authorization || "");
     const bearer = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || "";
@@ -551,7 +549,7 @@ if (allowPublic && req.url.startsWith("/v1/")) {
     if (bearer === configuredKey || headerKey === configuredKey) return done();
     reply.code(401).send({ error: "Gateway API Key 无效或缺失" });
     return;
-}
+  }
   const ip = req.ip || req.connection.remoteAddress;
   const isTrustedNetwork = ip === "127.0.0.1" || ip === "::1" || ip === "localhost" || /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(ip);
   if (isTrustedNetwork) return done();
@@ -785,12 +783,20 @@ app.post("/internal/wake-event", async (req, reply) => {
 // 读取 .env 值
 // ========================
 function readEnvValue(key) {
-    return process.env[key] || "";
+  try {
+    const envContent = fs.readFileSync(ENV_FILE, "utf-8");
+    const lines = envContent.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith(key + "=")) return trimmed.substring(key.length + 1).trim();
+    }
+  } catch {}
+  return process.env[key] || "";
 }
 
 function readEnvValueOrDefault(key, fallback) {
-    const value = process.env[key] || "";
-    return value === "" ? fallback : value;
+  const value = readEnvValue(key);
+  return value === "" ? fallback : value;
 }
 
 function normalizePositiveInteger(value, key, fallback) {
